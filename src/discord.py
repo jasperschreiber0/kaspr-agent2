@@ -31,6 +31,9 @@ def log(title: str, fields: list[dict], color: int = 0x4ade80) -> None:
 
 
 def error(title: str, detail: str, client_id: str = "unknown") -> None:
+    # Discord rejects empty field values and values over 1024 chars,
+    # and _post swallows the 4xx — sanitize so error alerts always land.
+    detail = (detail or "(no detail)")[:1000]
     _post(ERRORS_WEBHOOK, {
         "embeds": [{
             "title": f"🚨 {title}",

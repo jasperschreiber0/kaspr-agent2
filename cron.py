@@ -15,6 +15,7 @@ import sys
 import time
 import httpx
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -69,17 +70,20 @@ def poll_openclaw_events() -> list[dict]:
         return []
 
 
-def mark_event_processed(event_id: str) -> None:
+def mark_event_processed(event_id: str) -> bool:
     try:
-        httpx.patch(
+        resp = httpx.patch(
             f"{SUPABASE_URL}/rest/v1/openclaw_events",
             headers={**HEADERS, "Content-Type": "application/json"},
             params={"id": f"eq.{event_id}"},
             json={"processed": True, "processed_at": datetime.now(timezone.utc).isoformat()},
             timeout=10,
         )
+        resp.raise_for_status()
+        return True
     except Exception as e:
         print(f"[cron] Failed to mark event {event_id} processed: {e}")
+        return False
 
 
 def run_cron_mode():
@@ -99,26 +103,31 @@ def run_daemon_mode():
     openclaw.log_soul_status("idle", "Daemon started, polling for events")
 
     last_daily_run_date = None
+    sydney = ZoneInfo("Australia/Sydney")
+    # Events we ran but could not mark processed — skip them so a failing
+    # PATCH doesn't re-trigger a full (paid) scan every poll cycle.
+    unmarkable_event_ids: set[str] = set()
 
     while True:
-        now = datetime.now(timezone.utc)
+        local_now = datetime.now(sydney)
+        today = local_now.date()
 
-        # Daily cron: 7am AEST = 21:00 UTC previous day (or 20:00 during AEDT)
-        # Simple approach: run if current hour == 21 and haven't run today
-        aest_hour = (now.hour + 10) % 24  # rough AEST offset
-        today = now.date()
-
-        if aest_hour == 7 and last_daily_run_date != today:
-            print(f"[cron] Daily 7am AEST trigger firing")
+        if local_now.hour == 7 and last_daily_run_date != today:
+            print(f"[cron] Daily 7am Sydney trigger firing")
             run_all()
             last_daily_run_date = today
 
         # Check for on-demand events from OpenClaw
-        events = poll_openclaw_events()
-        for event in events:
-            print(f"[cron] On-demand scan requested via OpenClaw event {event['id']}")
+        events = [e for e in poll_openclaw_events() if e["id"] not in unmarkable_event_ids]
+        if events:
+            # One scan covers all pending requests — run_all() isn't
+            # parameterized per event, so running it N times is pure waste.
+            ids = [e["id"] for e in events]
+            print(f"[cron] On-demand scan requested via OpenClaw event(s): {', '.join(ids)}")
             run_all()
-            mark_event_processed(event["id"])
+            for event_id in ids:
+                if not mark_event_processed(event_id):
+                    unmarkable_event_ids.add(event_id)
 
         # Poll every 60 seconds
         time.sleep(60)
