@@ -25,13 +25,29 @@ REQUIRED_ENV = [
     "ANTHROPIC_API_KEY",
     "APIFY_TOKEN",
     "SUPABASE_URL",
-    "SUPABASE_SERVICE_KEY",
 ]
 
+# Standardizing on SUPABASE_SERVICE_ROLE_KEY to match agent1/agent3 — this
+# was the only service in the fleet using SUPABASE_SERVICE_KEY for the same
+# secret. Fall back to the old name so an already-deployed Railway env
+# doesn't break the moment this ships; rename the Railway var when
+# convenient and this warning goes away on its own.
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get(
+    "SUPABASE_SERVICE_KEY"
+)
+
 missing = [k for k in REQUIRED_ENV if not os.environ.get(k)]
+if not SUPABASE_SERVICE_ROLE_KEY:
+    missing.append("SUPABASE_SERVICE_ROLE_KEY (or legacy SUPABASE_SERVICE_KEY)")
 if missing:
     print(f"[cron] ❌ Missing required env vars: {', '.join(missing)}")
     sys.exit(1)
+
+if os.environ.get("SUPABASE_SERVICE_KEY") and not os.environ.get("SUPABASE_SERVICE_ROLE_KEY"):
+    print(
+        "[cron] ⚠️  Using legacy SUPABASE_SERVICE_KEY — rename to "
+        "SUPABASE_SERVICE_ROLE_KEY in Railway when convenient (matches agent1/agent3)."
+    )
 
 from src.trend_runner import run_all
 from src import openclaw
@@ -39,10 +55,9 @@ from src import openclaw
 MODE = os.environ.get("MODE", "cron").lower()
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
-SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
 HEADERS = {
-    "apikey": SUPABASE_SERVICE_KEY,
-    "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+    "apikey": SUPABASE_SERVICE_ROLE_KEY,
+    "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
 }
 
 
