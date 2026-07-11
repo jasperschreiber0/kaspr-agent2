@@ -1,9 +1,12 @@
 """
 openclaw.py — OpenClaw event bus integration for kaspr-agent2.
 
-OpenClaw uses Supabase Realtime as its event bus.
-Agents emit events by inserting rows into the `openclaw_events` table.
-Other agents listen via Supabase Realtime subscriptions.
+OpenClaw is a lightweight polling queue built on two Postgres tables,
+NOT Supabase Realtime — despite this module's name, nothing here uses a
+Realtime subscription. Agents emit events by inserting rows into the
+`openclaw_events` table; other agents notice them by polling on an
+interval (agent2: every 60s in daemon mode; agent3: every 30s). If you
+need sub-poll-interval latency, this isn't that yet.
 
 Event schema:
   id:          uuid (auto)
@@ -20,11 +23,13 @@ from datetime import datetime, timezone
 
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
-SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get(
+    "SUPABASE_SERVICE_KEY"
+)
 
 HEADERS = {
-    "apikey": SUPABASE_SERVICE_KEY,
-    "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+    "apikey": SUPABASE_SERVICE_ROLE_KEY,
+    "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
     "Content-Type": "application/json",
     "Prefer": "return=representation",
 }
@@ -62,7 +67,10 @@ def emit(event_name: str, payload: dict, source: str = "kaspr-trend-scout") -> d
 def log_soul_status(status: str, detail: str = "") -> None:
     """
     Log agent health/status to openclaw_agent_status table.
-    OpenClaw dashboard reads this to show agent health.
+    Note: as of this audit, nothing in kaspr-site/agent1/agent2/agent3
+    reads this table back — it's write-only from this system's
+    perspective. Kept in case an external OpenClaw dashboard reads it;
+    worth removing if that turns out not to exist.
     """
     row = {
         "agent": "kaspr-trend-scout",
